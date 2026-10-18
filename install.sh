@@ -158,6 +158,8 @@ detect_distro() {
             DISTRO_FAMILY="fedora" ;;
         steamos)
             DISTRO_FAMILY="arch" ;;
+        gentoo|funtoo|calculate)
+            DISTRO_FAMILY="gentoo" ;;
     esac
 
     if [ "$DISTRO_FAMILY" = "unknown" ]; then
@@ -166,6 +168,7 @@ detect_distro() {
             *fedora*|*rhel*) DISTRO_FAMILY="fedora" ;;
             *debian*|*ubuntu*) DISTRO_FAMILY="debian" ;;
             *suse*) DISTRO_FAMILY="opensuse" ;;
+            *gentoo*) DISTRO_FAMILY="gentoo" ;;
         esac
     fi
 }
@@ -190,6 +193,8 @@ Required build packages (names vary by distro):
 Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 python yder
 Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config python3
 Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config python3
+Gentoo:  emerge --noreplace dev-vcs/git dev-build/cmake dev-util/pkgconf dev-lang/python net-misc/curl app-arch/unzip dev-libs/libuv dev-libs/argtable dev-libs/libserialport dev-libs/libconfig dev-libs/hidapi dev-lang/lua dev-libs/libxdg-basedir dev-libs/libxml2 media-libs/libpulse sys-process/procps
+         (yder is in the guru overlay; without it the installer builds yder from source)
 EOF
 }
 
@@ -322,6 +327,39 @@ install_deps_opensuse() {
     fi
 }
 
+install_deps_gentoo() {
+    # No -devel splits on Gentoo. gcc and make are @system, so emerging them
+    # here would be a nasty surprise.
+    local deps=(
+        dev-vcs/git dev-build/cmake dev-util/pkgconf dev-lang/python
+        net-misc/curl app-arch/unzip
+        dev-libs/libuv dev-libs/argtable dev-libs/libserialport
+        dev-libs/libconfig dev-libs/hidapi dev-lang/lua
+        dev-libs/libxdg-basedir dev-libs/libxml2 media-libs/libpulse
+        sys-process/procps
+    )
+    if [ "$BUILD_BRIDGES" -eq 1 ]; then
+        deps+=(dev-util/mingw64-toolchain)
+    fi
+    log_info "Emerging Gentoo packages: ${deps[*]}"
+    # --noreplace: don't rebuild what's already installed.
+    run_root emerge --noreplace "${deps[@]}"
+
+    # yder is guru-only and ~arch, so a stock system can't emerge it. Fall
+    # back to source rather than writing to /etc/portage uninvited.
+    if run_root emerge --noreplace net-libs/yder; then
+        log_success "net-libs/yder emerged"
+    else
+        log_warn "Could not emerge net-libs/yder."
+        log_info "It lives in the guru overlay and is keyworded ~arch. To use the"
+        log_info "packaged version instead of a source build:"
+        log_info "    eselect repository enable guru && emaint sync -r guru"
+        log_info "    echo 'net-libs/yder ~amd64'    >> /etc/portage/package.accept_keywords/yder"
+        log_info "    echo 'net-libs/orcania ~amd64' >> /etc/portage/package.accept_keywords/yder"
+        install_yder_from_source
+    fi
+}
+
 install_dependencies() {
     log_info "Installing dependencies for $DISTRO_ID (family=$DISTRO_FAMILY)..."
     case "$DISTRO_FAMILY" in
@@ -329,6 +367,7 @@ install_dependencies() {
         fedora) install_deps_fedora ;;
         debian) install_deps_debian ;;
         opensuse) install_deps_opensuse ;;
+        gentoo) install_deps_gentoo ;;
         *)
             log_error "Unsupported distribution: $DISTRO_ID (ID_LIKE=$DISTRO_LIKE)"
             manual_dep_hint
